@@ -36,6 +36,7 @@ import com.alexvid.player.databinding.ActivityPlayerBinding
 import com.alexvid.player.databinding.DialogSubtitlesBinding
 import com.alexvid.player.model.FormatUtils
 import com.alexvid.player.model.HistoryItem
+import com.alexvid.player.ui.SettingsActivity
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -172,13 +173,32 @@ class PlayerActivity : AppCompatActivity() {
 
         prefs = PlayerPreferences(this)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        currentScaleIndex = prefs.defaultAspectIndex
+        binding.playerRoot.keepScreenOn = prefs.keepScreenOn
 
+        applyOrientationPreference()
         setupImmersiveSystemUi()
         initVlcEngine()
         setupControls()
         setupGestures()
         setupReviewControls()
         handleIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        setupImmersiveSystemUi()
+        binding.playerRoot.keepScreenOn = prefs.keepScreenOn
+        mediaPlayer?.setAudioDelay(prefs.defaultAudioDelayMs * 1000L)
+    }
+
+    private fun applyOrientationPreference() {
+        requestedOrientation = when (prefs.orientationMode) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            2 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            3 -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -209,15 +229,27 @@ class PlayerActivity : AppCompatActivity() {
     private fun initVlcEngine() {
         val options = arrayListOf(
             "--aout=opensles",
-            "--audio-time-stretch",
-            "--sub-autodetect-file",
+            if (prefs.audioTimeStretch) "--audio-time-stretch" else "--no-audio-time-stretch",
             "--freetype-rel-fontsize=${prefs.subtitleRelFontSize}",
             "--freetype-color=${prefs.subtitleColor}",
             "--freetype-outline-thickness=4",
-            "--freetype-background-opacity=96",
-            "--http-reconnect",
+            "--freetype-background-opacity=${prefs.subtitleBgOpacity}",
             "--avcodec-fast"
         )
+        if (prefs.subtitleAutoLoad) {
+            options.add("--sub-autodetect-file")
+        }
+        if (prefs.subtitleEncoding.isNotBlank()) {
+            options.add("--subsdec-encoding=${prefs.subtitleEncoding}")
+        }
+        if (prefs.httpReconnect) {
+            options.add("--http-reconnect")
+        }
+        when (prefs.deinterlaceMode) {
+            0 -> options.add("--deinterlace=-1")
+            1 -> options.add("--deinterlace=0")
+            2 -> options.add("--deinterlace=1")
+        }
         libVLC = LibVLC(this, options)
         mediaPlayer = MediaPlayer(libVLC).apply {
             // useTextureView = true enables smooth 1x-8x zoom/pan & clean direct video screenshots
@@ -284,14 +316,14 @@ class PlayerActivity : AppCompatActivity() {
         currentTitle = title
         isOnlineStream = FormatUtils.isNetworkUrl(uriString)
         hasAppliedResume = false
-        pendingResumePosition = prefs.getPosition(uriString)
-        normalPlaybackRate = 1.0f
+        pendingResumePosition = if (prefs.resumePlayback) prefs.getPosition(uriString) else 0L
+        normalPlaybackRate = prefs.defaultSpeed
         softwareVolumeBoost = 100
         preciseFrameTimeMs = -1L
 
         binding.tvVideoTitle.text = title
         binding.tvStreamBadge.visibility = if (isOnlineStream) View.VISIBLE else View.GONE
-        binding.btnSpeed.text = "1.0x"
+        binding.btnSpeed.text = "${normalPlaybackRate}x"
         binding.layoutError.visibility = View.GONE
         binding.layoutBuffering.visibility = View.VISIBLE
         binding.tvBuffering.text = getString(R.string.loading_video)
@@ -326,8 +358,9 @@ class PlayerActivity : AppCompatActivity() {
         media.addOption(":network-caching=$currentCacheMs")
         media.addOption(":file-caching=500")
         media.addOption(":live-caching=$currentCacheMs")
-        if (currentUserAgent.isNotBlank()) {
-            media.addOption(":http-user-agent=$currentUserAgent")
+        val effectiveUa = currentUserAgent.ifBlank { prefs.defaultUserAgent }
+        if (effectiveUa.isNotBlank()) {
+            media.addOption(":http-user-agent=$effectiveUa")
         }
         if (currentReferer.isNotBlank()) {
             media.addOption(":http-referrer=$currentReferer")
@@ -337,9 +370,10 @@ class PlayerActivity : AppCompatActivity() {
         media.release()
         player.rate = normalPlaybackRate
         player.setVolume(softwareVolumeBoost)
+        player.setAudioDelay(prefs.defaultAudioDelayMs * 1000L)
         player.play()
 
-        if (!isOnlineStream) {
+        if (!isOnlineStream && prefs.subtitleAutoLoad) {
             val companionSubs = SubtitleHelper.findCompanionSubtitles(uri)
             companionSubs.firstOrNull()?.let { subUri ->
                 player.addSlave(IMedia.Slave.Type.Subtitle, subUri, true)
@@ -437,7 +471,7 @@ class PlayerActivity : AppCompatActivity() {
                     prefs.savePosition(currentUriString, 0L, player.length)
                     when {
                         isRepeatEnabled -> playMedia(currentUriString, currentTitle)
-                        playlistUris.isNotEmpty() && playlistIndex + 1 < playlistUris.size -> {
+                        prefs.autoPlayNext && playlistUris.isNotEmpty() && playlistIndex + 1 < playlistUris.size -> {
                             playlistIndex++
                             updatePlaylistButtons()
                             playMedia(
@@ -480,13 +514,13 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         binding.btnRewind.setOnClickListener {
-            seekBy(-10_000L)
+            seekBy(-prefs.seekStepSeconds * 1000L)
             showDoubleTapFeedback(left = true)
             scheduleHideControls()
         }
 
         binding.btnForward.setOnClickListener {
-            seekBy(10_000L)
+            seekBy(prefs.seekStepSeconds * 1000L)
             showDoubleTapFeedback(left = false)
             scheduleHideControls()
         }
@@ -551,6 +585,10 @@ class PlayerActivity : AppCompatActivity() {
                 ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             }
             scheduleHideControls()
+        }
+
+        binding.btnPlayerSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
         }
 
         binding.btnPip.visibility = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) View.VISIBLE else View.GONE
@@ -856,11 +894,14 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
 
-        triggerShutterFlash()
+        if (prefs.screenshotFlash) {
+            triggerShutterFlash()
+        }
 
+        val format = prefs.screenshotFormat
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                ScreenshotHelper.saveBitmapToGallery(this@PlayerActivity, bitmap, cropped)
+                ScreenshotHelper.saveBitmapToGallery(this@PlayerActivity, bitmap, cropped, format)
             }
             if (result.success) {
                 val msg = if (result.croppedRegion) {
@@ -916,12 +957,12 @@ class PlayerActivity : AppCompatActivity() {
                 }
 
                 override fun onDoubleTapLeft() {
-                    seekBy(-10_000L)
+                    seekBy(-prefs.seekStepSeconds * 1000L)
                     showDoubleTapFeedback(left = true)
                 }
 
                 override fun onDoubleTapRight() {
-                    seekBy(10_000L)
+                    seekBy(prefs.seekStepSeconds * 1000L)
                     showDoubleTapFeedback(left = false)
                 }
 
@@ -1024,6 +1065,13 @@ class PlayerActivity : AppCompatActivity() {
                     handler.removeCallbacks(hideOsdRunnable)
                     handler.postDelayed(hideOsdRunnable, 700L)
                 }
+
+                override fun isBrightnessEnabled(): Boolean = prefs.gestureBrightness
+                override fun isVolumeEnabled(): Boolean = prefs.gestureVolume
+                override fun isVolumeBoostEnabled(): Boolean = prefs.volumeBoostEnabled
+                override fun isSeekEnabled(): Boolean = prefs.gestureSeek
+                override fun isDoubleTapEnabled(): Boolean = prefs.gestureDoubleTap
+                override fun isLongPress2xEnabled(): Boolean = prefs.gestureLongPress2x
             }
         )
 
@@ -1083,6 +1131,9 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun showDoubleTapFeedback(left: Boolean) {
+        val sec = prefs.seekStepSeconds
+        binding.tvDoubleTapLeft.text = "⏪ -${sec}с"
+        binding.tvDoubleTapRight.text = "+${sec}с ⏩"
         binding.tvDoubleTapLeft.visibility = if (left) View.VISIBLE else View.GONE
         binding.tvDoubleTapRight.visibility = if (left) View.GONE else View.VISIBLE
         handler.removeCallbacks(hideDoubleTapRunnable)
@@ -1127,8 +1178,9 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun scheduleHideControls() {
         handler.removeCallbacks(hideControlsRunnable)
-        if (mediaPlayer?.isPlaying == true && !isReviewModeActive) {
-            handler.postDelayed(hideControlsRunnable, 4000L)
+        val timeoutSec = prefs.hudTimeoutSeconds
+        if (timeoutSec > 0 && mediaPlayer?.isPlaying == true && !isReviewModeActive) {
+            handler.postDelayed(hideControlsRunnable, timeoutSec * 1000L)
         }
     }
 
@@ -1375,7 +1427,7 @@ class PlayerActivity : AppCompatActivity() {
         stopFrameAutoRepeat()
         saveCurrentProgress()
         val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
-        if (!inPip) {
+        if (!inPip && !prefs.backgroundPlay) {
             mediaPlayer?.pause()
         }
     }
@@ -1383,7 +1435,7 @@ class PlayerActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
-        if (!inPip) {
+        if (!inPip && !prefs.backgroundPlay) {
             mediaPlayer?.pause()
         }
     }

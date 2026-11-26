@@ -118,22 +118,29 @@ object ScreenshotHelper {
     }
 
     /**
-     * Saves PNG screenshot into device Gallery album "Pictures/ALEXVID".
+     * Saves PNG or JPEG screenshot into device Gallery album "Pictures/ALEXVID".
      */
     fun saveBitmapToGallery(
         context: Context,
         bitmap: Bitmap,
-        isCroppedRegion: Boolean
+        isCroppedRegion: Boolean,
+        format: String = "PNG"
     ): CaptureResult {
+        val isJpeg = format.equals("JPEG", ignoreCase = true) || format.equals("JPG", ignoreCase = true)
+        val ext = if (isJpeg) "jpg" else "png"
+        val mime = if (isJpeg) "image/jpeg" else "image/png"
+        val compressFormat = if (isJpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG
+        val quality = if (isJpeg) 94 else 100
+
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val suffix = if (isCroppedRegion) "_zoom" else ""
-        val fileName = "ALEXVID_${timestamp}${suffix}.png"
+        val fileName = "ALEXVID_${timestamp}${suffix}.$ext"
 
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                    put(MediaStore.Images.Media.MIME_TYPE, mime)
                     put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/ALEXVID")
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
@@ -142,8 +149,8 @@ object ScreenshotHelper {
                     ?: return CaptureResult(false, error = "MediaStore insert failed")
 
                 resolver.openOutputStream(uri)?.use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                        throw IllegalStateException("PNG compression failed")
+                    if (!bitmap.compress(compressFormat, quality, out)) {
+                        throw IllegalStateException("Image compression failed")
                     }
                 } ?: throw IllegalStateException("OutputStream unavailable")
 
@@ -157,14 +164,14 @@ object ScreenshotHelper {
                 val albumDir = File(picturesDir, "ALEXVID").apply { mkdirs() }
                 val outFile = File(albumDir, fileName)
                 FileOutputStream(outFile).use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                        throw IllegalStateException("PNG compression failed")
+                    if (!bitmap.compress(compressFormat, quality, out)) {
+                        throw IllegalStateException("Image compression failed")
                     }
                 }
                 MediaScannerConnection.scanFile(
                     context,
                     arrayOf(outFile.absolutePath),
-                    arrayOf("image/png"),
+                    arrayOf(mime),
                     null
                 )
                 CaptureResult(true, fileName = fileName, croppedRegion = isCroppedRegion)

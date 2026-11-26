@@ -31,6 +31,12 @@ class PlayerGestureHelper(
         fun onLongPressStart()
         fun onLongPressEnd()
         fun onGestureEnd()
+        fun isBrightnessEnabled(): Boolean = true
+        fun isVolumeEnabled(): Boolean = true
+        fun isVolumeBoostEnabled(): Boolean = true
+        fun isSeekEnabled(): Boolean = true
+        fun isDoubleTapEnabled(): Boolean = true
+        fun isLongPress2xEnabled(): Boolean = true
     }
 
     private enum class DragMode {
@@ -90,7 +96,7 @@ class PlayerGestureHelper(
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (listener.isLocked()) {
+                if (listener.isLocked() || !listener.isDoubleTapEnabled()) {
                     listener.onSingleTap()
                     return true
                 }
@@ -105,7 +111,7 @@ class PlayerGestureHelper(
             }
 
             override fun onLongPress(e: MotionEvent) {
-                if (listener.isLocked() || dragMode != DragMode.NONE || isScaling) return
+                if (listener.isLocked() || !listener.isLongPress2xEnabled() || dragMode != DragMode.NONE || isScaling) return
                 isLongPressing = true
                 listener.onLongPressStart()
             }
@@ -148,18 +154,22 @@ class PlayerGestureHelper(
                     val threshold = 32f
                     if (abs(dx) > threshold || abs(dy) > threshold) {
                         if (abs(dx) > abs(dy) * 1.2f) {
-                            if (listener.getDurationMs() > 0L) {
+                            if (listener.isSeekEnabled() && listener.getDurationMs() > 0L) {
                                 dragMode = DragMode.SEEK
                                 initialSeekPos = listener.onSeekStart()
                                 pendingSeekTarget = initialSeekPos
                             }
                         } else if (startY > edgeMargin && startY < height - edgeMargin) {
                             if (startX < width * 0.5f) {
-                                dragMode = DragMode.BRIGHTNESS
-                                initialBrightness = listener.onBrightnessStart()
+                                if (listener.isBrightnessEnabled()) {
+                                    dragMode = DragMode.BRIGHTNESS
+                                    initialBrightness = listener.onBrightnessStart()
+                                }
                             } else {
-                                dragMode = DragMode.VOLUME
-                                initialVolume = listener.onVolumeStart()
+                                if (listener.isVolumeEnabled()) {
+                                    dragMode = DragMode.VOLUME
+                                    initialVolume = listener.onVolumeStart()
+                                }
                             }
                         }
                     }
@@ -173,8 +183,10 @@ class PlayerGestureHelper(
                     }
 
                     DragMode.VOLUME -> {
-                        val delta = dy / (height * 0.65f) * 1.6f
-                        val next = (initialVolume + delta).coerceIn(0f, 2.0f)
+                        val maxVolume = if (listener.isVolumeBoostEnabled()) 2.0f else 1.0f
+                        val sensitivity = if (listener.isVolumeBoostEnabled()) 1.6f else 1.0f
+                        val delta = dy / (height * 0.65f) * sensitivity
+                        val next = (initialVolume + delta).coerceIn(0f, maxVolume)
                         listener.onVolumeChange(next)
                     }
 

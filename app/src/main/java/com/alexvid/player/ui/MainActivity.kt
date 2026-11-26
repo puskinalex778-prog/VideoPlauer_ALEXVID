@@ -97,6 +97,9 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshHistory()
+        val cacheStep = ((prefs.networkCachingMs - 500) / 500).coerceIn(0, 10)
+        binding.seekNetworkCache.progress = cacheStep
+        binding.tvCacheValue.text = "${getString(R.string.network_cache_label)}: ${prefs.networkCachingMs} мс"
         if (hasVideoPermission() && allVideos.isNotEmpty()) {
             videoAdapter.notifyDataSetChanged()
         }
@@ -111,7 +114,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 R.id.action_settings -> {
-                    showSettingsDialog()
+                    startActivity(Intent(this, SettingsActivity::class.java))
                     true
                 }
 
@@ -459,52 +462,6 @@ class MainActivity : AppCompatActivity() {
                 applyVideoFilterAndSort()
                 dialog.dismiss()
             }
-            .show()
-    }
-
-    private fun showSettingsDialog() {
-        val items = arrayOf(
-            "${getString(R.string.hw_decoding_title)}: ${hwLabel(prefs.hwDecodingMode)}",
-            getString(R.string.gestures_guide_title)
-        )
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.settings_title)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showHwDecodingDialog()
-                    1 -> showGesturesGuideDialog()
-                }
-            }
-            .setPositiveButton(R.string.close, null)
-            .show()
-    }
-
-    private fun hwLabel(mode: Int): String = when (mode) {
-        1 -> getString(R.string.hw_full)
-        2 -> getString(R.string.hw_disabled)
-        else -> getString(R.string.hw_auto)
-    }
-
-    private fun showHwDecodingDialog() {
-        val options = arrayOf(
-            getString(R.string.hw_auto),
-            getString(R.string.hw_full),
-            getString(R.string.hw_disabled)
-        )
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.hw_decoding_title)
-            .setSingleChoiceItems(options, prefs.hwDecodingMode) { dialog, which ->
-                prefs.hwDecodingMode = which
-                dialog.dismiss()
-            }
-            .show()
-    }
-
-    private fun showGesturesGuideDialog() {
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.gestures_guide_title)
-            .setMessage(R.string.gestures_guide_text)
-            .setPositiveButton(R.string.close, null)
             .show()
     }
 }
