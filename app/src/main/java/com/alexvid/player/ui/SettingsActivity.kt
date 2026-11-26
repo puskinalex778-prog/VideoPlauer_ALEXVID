@@ -9,14 +9,20 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.alexvid.player.BuildConfig
 import com.alexvid.player.R
+import com.alexvid.player.data.CacheHelper
 import com.alexvid.player.data.PlayerPreferences
 import com.alexvid.player.databinding.ActivitySettingsBinding
 import com.alexvid.player.databinding.ItemSettingOptionBinding
 import com.alexvid.player.databinding.ItemSettingSwitchBinding
+import com.alexvid.player.model.FormatUtils
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.abs
 
@@ -375,7 +381,42 @@ class SettingsActivity : AppCompatActivity() {
                 .show()
         }
 
-        // 7. СКРИНШОТЫ И ПРИЛОЖЕНИЕ
+        // 7. ПАМЯТЬ И КЭШ
+        val cacheCard = addSection("Память и кэш")
+        addOption(
+            cacheCard,
+            title = "Очистить кэш приложения",
+            subtitle = "Потоковое видео хранится только в RAM (буфер 2 сек) и не засоряет память телефона. Кэш используется только для миниатюр.",
+            value = "..."
+        ) { tvVal ->
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) {
+                    CacheHelper.clearAllCache(this@SettingsActivity)
+                }
+                val newSize = withContext(Dispatchers.IO) {
+                    CacheHelper.getTotalCacheSizeBytes(this@SettingsActivity)
+                }
+                tvVal.text = formatCacheSize(newSize)
+                Toast.makeText(this@SettingsActivity, "Кэш очищен", Toast.LENGTH_SHORT).show()
+            }
+        }.also { tvCacheVal ->
+            lifecycleScope.launch {
+                val bytes = withContext(Dispatchers.IO) {
+                    CacheHelper.getTotalCacheSizeBytes(this@SettingsActivity)
+                }
+                tvCacheVal.text = formatCacheSize(bytes)
+            }
+        }
+
+        addSwitch(
+            cacheCard,
+            title = "Очищать временные файлы при выходе",
+            subtitle = "Автоматически удалять временные копии субтитров после просмотра",
+            checked = prefs.autoClearCache,
+            isLast = true
+        ) { prefs.autoClearCache = it }
+
+        // 8. СКРИНШОТЫ И ПРИЛОЖЕНИЕ
         val appCard = addSection("Скриншоты и приложение")
         addOption(
             appCard,
@@ -493,7 +534,7 @@ class SettingsActivity : AppCompatActivity() {
         value: String,
         isLast: Boolean = false,
         onClick: (TextView) -> Unit
-    ) {
+    ): TextView {
         val row = ItemSettingOptionBinding.inflate(LayoutInflater.from(this), container, false)
         row.tvTitle.text = title
         row.tvSubtitle.text = subtitle
@@ -501,6 +542,7 @@ class SettingsActivity : AppCompatActivity() {
         row.root.setOnClickListener { onClick(row.tvValue) }
         container.addView(row.root)
         if (!isLast) addDivider(container)
+        return row.tvValue
     }
 
     private fun addDivider(container: LinearLayout) {
@@ -599,5 +641,9 @@ class SettingsActivity : AppCompatActivity() {
         0 -> "Нет"
         200 -> "Тёмный"
         else -> "Полупрозр."
+    }
+
+    private fun formatCacheSize(bytes: Long): String {
+        return if (bytes < 1024L) "0 КБ" else FormatUtils.formatSize(bytes)
     }
 }

@@ -12,6 +12,7 @@ import android.text.TextWatcher
 import android.view.View
 import android.widget.SeekBar
 import android.widget.Toast
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -51,9 +52,37 @@ class MainActivity : AppCompatActivity() {
     ) { granted ->
         if (granted) {
             binding.cardPermission.visibility = View.GONE
-            loadVideos()
         } else {
             binding.cardPermission.visibility = View.VISIBLE
+        }
+        loadVideos()
+    }
+
+    private val pickGalleryVideosLauncher = registerForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(20)
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        lifecycleScope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                uris.map { uri ->
+                    runCatching {
+                        contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    }
+                    VideoScanner.extractVideoMetadata(this@MainActivity, uri, "Из галереи")
+                }
+            }
+            prefs.addGalleryVideos(imported)
+            selectedFolder = "Из галереи"
+            loadVideos()
+            val msg = if (imported.size == 1) {
+                "Видео добавлено из галереи"
+            } else {
+                "Добавлено видео из галереи: ${imported.size}"
+            }
+            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -160,21 +189,37 @@ class MainActivity : AppCompatActivity() {
     // --- TAB 1: LOCAL VIDEOS ---
 
     private fun setupVideosTab() {
-        videoAdapter = VideoAdapter(prefs) { _, index ->
-            val currentList = videoAdapter.currentItems()
-            val uris = ArrayList(currentList.map { it.uri.toString() })
-            val titles = ArrayList(currentList.map { it.title })
-            startActivity(
-                PlayerActivity.createIntent(
-                    context = this,
-                    uriString = uris[index],
-                    title = titles[index],
-                    playlistUris = uris,
-                    playlistTitles = titles,
-                    playlistIndex = index
+        videoAdapter = VideoAdapter(
+            prefs = prefs,
+            onClick = { _, index ->
+                val currentList = videoAdapter.currentItems()
+                val uris = ArrayList(currentList.map { it.uri.toString() })
+                val titles = ArrayList(currentList.map { it.title })
+                startActivity(
+                    PlayerActivity.createIntent(
+                        context = this,
+                        uriString = uris[index],
+                        title = titles[index],
+                        playlistUris = uris,
+                        playlistTitles = titles,
+                        playlistIndex = index
+                    )
                 )
-            )
-        }
+            },
+            onLongClick = { video ->
+                if (video.folderName == "Из галереи") {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle(video.title)
+                        .setMessage("Убрать это видео из списка «Из галереи» в ALEXVID? (Файл в галерее телефона не удалится)")
+                        .setPositiveButton("Убрать") { _, _ ->
+                            prefs.removeGalleryVideo(video.uri.toString())
+                            loadVideos()
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            }
+        )
         binding.rvVideos.layoutManager = LinearLayoutManager(this)
         binding.rvVideos.adapter = videoAdapter
 
@@ -182,9 +227,10 @@ class MainActivity : AppCompatActivity() {
         binding.swipeRefresh.setOnRefreshListener { loadVideos() }
 
         binding.btnGrantPermission.setOnClickListener { requestVideoPermission() }
+        binding.btnPickFromGalleryCard.setOnClickListener { openGalleryPicker() }
 
         binding.fabOpenFile.setOnClickListener {
-            openDocumentLauncher.launch(arrayOf("video/*", "*/*"))
+            showAddVideoMenu()
         }
 
         binding.etSearch.addTextChangedListener(object : TextWatcher {
@@ -216,28 +262,54 @@ class MainActivity : AppCompatActivity() {
         permissionLauncher.launch(requiredVideoPermission())
     }
 
+    private fun openGalleryPicker() {
+        pickGalleryVideosLauncher.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+        )
+    }
+
+    private fun showAddVideoMenu() {
+        val options = arrayOf(
+            "Добавить видео из Галереи (одно или несколько)",
+            "Открыть любой файл с устройства (MKV, AVI, TS, FLV…)"
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.add_video)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> openGalleryPicker()
+                    1 -> openDocumentLauncher.launch(arrayOf("video/*", "*/*"))
+                }
+            }
+            .show()
+    }
+
     private fun checkPermissionAndLoad() {
         if (hasVideoPermission()) {
             binding.cardPermission.visibility = View.GONE
             loadVideos()
         } else {
             binding.cardPermission.visibility = View.VISIBLE
+            loadVideos()
             requestVideoPermission()
         }
     }
 
     private fun loadVideos() {
-        if (!hasVideoPermission()) {
-            binding.swipeRefresh.isRefreshing = false
-            binding.cardPermission.visibility = View.VISIBLE
-            return
-        }
+        val hasPerm = hasVideoPermission()
+        binding.cardPermission.visibility = if (hasPerm) View.GONE else View.VISIBLE
         binding.swipeRefresh.isRefreshing = true
         lifecycleScope.launch {
-            val scanned = withContext(Dispatchers.IO) {
-                VideoScanner.scanDeviceVideos(this@MainActivity)
+            val combined = withContext(Dispatchers.IO) {
+                val galleryList = prefs.getGalleryVideos()
+                val deviceList = if (hasPerm) VideoScanner.scanDeviceVideos(this@MainActivity) else emptyList()
+                val existingUris = galleryList.map { it.uri.toString() }.toHashSet()
+                galleryList + deviceList.filterNot { it.uri.toString() in existingUris }
             }
-            allVideos = scanned
+            allVideos = combined
+            if (selectedFolder != null && allVideos.none { it.folderName == selectedFolder }) {
+                selectedFolder = null
+            }
             rebuildFolderChips()
             applyVideoFilterAndSort()
             binding.swipeRefresh.isRefreshing = false

@@ -2,6 +2,7 @@ package com.alexvid.player.data
 
 import android.content.ContentUris
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -96,5 +97,65 @@ object VideoScanner {
         }
         val last = uri.lastPathSegment?.substringAfterLast('/')?.substringBefore('?')
         return last?.takeIf { it.isNotBlank() } ?: uri.toString()
+    }
+
+    /**
+     * Builds a LocalVideo entry from a gallery / SAF Uri without requiring full storage access.
+     */
+    fun extractVideoMetadata(context: Context, uri: Uri, folderName: String = "Из галереи"): LocalVideo {
+        var displayName = resolveDisplayName(context, uri)
+        var sizeBytes = 0L
+
+        if (uri.scheme == "content") {
+            runCatching {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                    null,
+                    null,
+                    null
+                )?.use { c ->
+                    if (c.moveToFirst()) {
+                        val nameIdx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (nameIdx >= 0) {
+                            c.getString(nameIdx)?.takeIf { it.isNotBlank() }?.let { displayName = it }
+                        }
+                        val sizeIdx = c.getColumnIndex(OpenableColumns.SIZE)
+                        if (sizeIdx >= 0 && !c.isNull(sizeIdx)) {
+                            sizeBytes = c.getLong(sizeIdx)
+                        }
+                    }
+                }
+            }
+        }
+
+        var durationMs = 0L
+        var width = 0
+        var height = 0
+        val retriever = MediaMetadataRetriever()
+        runCatching {
+            retriever.setDataSource(context, uri)
+            durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+        }
+        runCatching { retriever.release() }
+
+        val title = displayName.substringBeforeLast('.').ifBlank { displayName }
+        val ext = displayName.substringAfterLast('.', "VID").uppercase(Locale.US).take(5)
+
+        return LocalVideo(
+            id = uri.toString().hashCode().toLong(),
+            uri = uri,
+            title = title,
+            displayName = displayName,
+            folderName = folderName,
+            durationMs = durationMs,
+            sizeBytes = sizeBytes,
+            dateAdded = System.currentTimeMillis() / 1000L,
+            width = width,
+            height = height,
+            extension = ext
+        )
     }
 }

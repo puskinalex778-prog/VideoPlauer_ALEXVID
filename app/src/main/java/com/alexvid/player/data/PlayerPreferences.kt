@@ -1,7 +1,9 @@
 package com.alexvid.player.data
 
 import android.content.Context
+import android.net.Uri
 import com.alexvid.player.model.HistoryItem
+import com.alexvid.player.model.LocalVideo
 import com.alexvid.player.model.SortOrder
 import com.alexvid.player.model.StreamItem
 import org.json.JSONArray
@@ -60,6 +62,10 @@ class PlayerPreferences(context: Context) {
         // Screenshots & Review
         private const val KEY_SCREENSHOT_FORMAT = "screenshot_format" // "PNG" or "JPEG"
         private const val KEY_SCREENSHOT_FLASH = "screenshot_flash"
+
+        // Gallery Imports & Cache
+        private const val KEY_GALLERY_VIDEOS = "gallery_added_videos"
+        private const val KEY_AUTO_CLEAR_CACHE = "auto_clear_cache"
 
         private const val MAX_HISTORY = 40
     }
@@ -360,18 +366,94 @@ class PlayerPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_SCREENSHOT_FLASH, true)
         set(value) = prefs.edit().putBoolean(KEY_SCREENSHOT_FLASH, value).apply()
 
+    // --- Cache ---
+
+    var autoClearCache: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_CLEAR_CACHE, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_CLEAR_CACHE, value).apply()
+
+    // --- Gallery Imported Videos ---
+
+    fun getGalleryVideos(): List<LocalVideo> {
+        val raw = prefs.getString(KEY_GALLERY_VIDEOS, null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            val result = mutableListOf<LocalVideo>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val uriStr = o.optString("uri")
+                if (uriStr.isBlank()) continue
+                result.add(
+                    LocalVideo(
+                        id = o.optLong("id", uriStr.hashCode().toLong()),
+                        uri = Uri.parse(uriStr),
+                        title = o.optString("title", "Видео"),
+                        displayName = o.optString("name", "video.mp4"),
+                        folderName = "Из галереи",
+                        durationMs = o.optLong("dur", 0L),
+                        sizeBytes = o.optLong("size", 0L),
+                        dateAdded = o.optLong("date", System.currentTimeMillis() / 1000L),
+                        width = o.optInt("w", 0),
+                        height = o.optInt("h", 0),
+                        extension = o.optString("ext", "VID")
+                    )
+                )
+            }
+            result
+        }.getOrDefault(emptyList())
+    }
+
+    fun addGalleryVideos(newVideos: List<LocalVideo>) {
+        if (newVideos.isEmpty()) return
+        val current = getGalleryVideos().toMutableList()
+        for (vid in newVideos) {
+            current.removeAll { it.uri.toString() == vid.uri.toString() }
+            current.add(0, vid.copy(folderName = "Из галереи"))
+        }
+        persistGalleryVideos(current)
+    }
+
+    fun removeGalleryVideo(uriString: String) {
+        val current = getGalleryVideos().toMutableList()
+        current.removeAll { it.uri.toString() == uriString }
+        persistGalleryVideos(current)
+    }
+
+    private fun persistGalleryVideos(list: List<LocalVideo>) {
+        val arr = JSONArray()
+        for (v in list) {
+            arr.put(
+                JSONObject().apply {
+                    put("id", v.id)
+                    put("uri", v.uri.toString())
+                    put("title", v.title)
+                    put("name", v.displayName)
+                    put("dur", v.durationMs)
+                    put("size", v.sizeBytes)
+                    put("date", v.dateAdded)
+                    put("w", v.width)
+                    put("h", v.height)
+                    put("ext", v.extension)
+                }
+            )
+        }
+        prefs.edit().putString(KEY_GALLERY_VIDEOS, arr.toString()).apply()
+    }
+
     /**
-     * Resets all player settings to factory defaults while preserving bookmarks & history.
+     * Resets all player settings to factory defaults while preserving bookmarks, gallery imports & history.
      */
     fun resetAllSettings() {
         val savedPositions = prefs.getString(KEY_POSITIONS, null)
         val savedStreams = prefs.getString(KEY_STREAMS, null)
         val savedHistory = prefs.getString(KEY_HISTORY, null)
+        val savedGallery = prefs.getString(KEY_GALLERY_VIDEOS, null)
         prefs.edit().clear().apply()
         prefs.edit().apply {
             if (savedPositions != null) putString(KEY_POSITIONS, savedPositions)
             if (savedStreams != null) putString(KEY_STREAMS, savedStreams)
             if (savedHistory != null) putString(KEY_HISTORY, savedHistory)
+            if (savedGallery != null) putString(KEY_GALLERY_VIDEOS, savedGallery)
         }.apply()
     }
 }

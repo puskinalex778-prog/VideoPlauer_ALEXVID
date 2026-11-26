@@ -11,8 +11,9 @@
     <!-- Library -->
     <string name="search_hint">Поиск видео...</string>
     <string name="all_folders">Все папки</string>
+    <string name="add_video">Добавить видео</string>
     <string name="open_any_file">Открыть файл</string>
-    <string name="no_videos_found">Видео не найдены.\nНажмите «Открыть файл», чтобы выбрать любой формат (MKV, AVI, MP4, FLV, WMV, TS…)</string>
+    <string name="no_videos_found">Видео не найдены.\nНажмите «Добавить видео», чтобы выбрать из Галереи или открыть любой формат (MKV, AVI, MP4, FLV, WMV, TS…)</string>
     <string name="permission_needed">Нужен доступ к видеофайлам, чтобы показать библиотеку устройства.</string>
     <string name="grant_permission">Разрешить доступ</string>
     <string name="sort_title">Сортировка</string>

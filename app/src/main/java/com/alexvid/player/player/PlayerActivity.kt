@@ -25,11 +25,13 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.alexvid.player.R
+import com.alexvid.player.data.CacheHelper
 import com.alexvid.player.data.PlayerPreferences
 import com.alexvid.player.data.VideoScanner
 import com.alexvid.player.databinding.ActivityPlayerBinding
@@ -282,13 +284,19 @@ class PlayerActivity : AppCompatActivity() {
                 }
 
                 Intent.ACTION_SEND -> {
-                    val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                    val extracted = FormatUtils.extractUrlFromText(sharedText)
-                    if (!extracted.isNullOrBlank()) {
-                        uriString = extracted
-                        title = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-                            ?.takeIf { it.isNotBlank() }
-                            ?: VideoScanner.resolveDisplayName(this, Uri.parse(extracted))
+                    val streamUri = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    if (streamUri != null) {
+                        uriString = streamUri.toString()
+                        title = VideoScanner.resolveDisplayName(this, streamUri)
+                    } else {
+                        val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                        val extracted = FormatUtils.extractUrlFromText(sharedText)
+                        if (!extracted.isNullOrBlank()) {
+                            uriString = extracted
+                            title = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                                ?.takeIf { it.isNotBlank() }
+                                ?: VideoScanner.resolveDisplayName(this, Uri.parse(extracted))
+                        }
                     }
                 }
             }
@@ -1454,6 +1462,9 @@ class PlayerActivity : AppCompatActivity() {
         libVLC?.release()
         libVLC = null
         closeActivePfd()
+        if (prefs.autoClearCache) {
+            CacheHelper.clearTemporarySubtitles(applicationContext)
+        }
     }
 
     private fun closeActivePfd() {

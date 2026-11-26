@@ -14,7 +14,8 @@ import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 
 class VideoAdapter(
     private val prefs: PlayerPreferences,
-    private val onClick: (LocalVideo, Int) -> Unit
+    private val onClick: (LocalVideo, Int) -> Unit,
+    private val onLongClick: ((LocalVideo) -> Unit)? = null
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
 
     private val items = mutableListOf<LocalVideo>()
@@ -70,6 +71,10 @@ class VideoAdapter(
 
             binding.root.setOnClickListener {
                 onClick(video, position)
+            }
+            binding.root.setOnLongClickListener {
+                onLongClick?.invoke(video)
+                onLongClick != null
             }
         }
     }
