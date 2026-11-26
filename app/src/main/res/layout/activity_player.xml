@@ -7,11 +7,20 @@
     android:background="@color/black"
     android:keepScreenOn="true">
 
-    <!-- LibVLC Video & Subtitle Surface -->
-    <org.videolan.libvlc.util.VLCVideoLayout
-        android:id="@+id/vlcVideoLayout"
+    <!-- Clipped Video Viewport (supports smooth up to 8x zoom & pan) -->
+    <FrameLayout
+        android:id="@+id/videoViewport"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:clipChildren="true"
+        android:clipToPadding="true">
+
+        <!-- LibVLC Video & Subtitle Surface (TextureView mode for zoom/pan & clean screenshots) -->
+        <org.videolan.libvlc.util.VLCVideoLayout
+            android:id="@+id/vlcVideoLayout"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
 
     <!-- Gesture Capture Layer -->
     <View
@@ -19,6 +28,15 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@android:color/transparent" />
+
+    <!-- Screenshot Shutter Flash -->
+    <View
+        android:id="@+id/viewShutterFlash"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0"
+        android:background="@color/white"
+        android:visibility="gone" />
 
     <!-- Buffering / Loading Indicator -->
     <LinearLayout
@@ -49,7 +67,7 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <!-- Gesture OSD Pill (Brightness / Volume / Seek / Aspect Ratio) -->
+    <!-- Gesture OSD Pill (Brightness / Volume / Seek / Aspect Ratio / Screenshot) -->
     <LinearLayout
         android:id="@+id/layoutOsd"
         android:layout_width="wrap_content"
@@ -84,7 +102,7 @@
                 android:layout_height="wrap_content"
                 android:text="100%"
                 android:textColor="@color/white"
-                android:textSize="20sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
@@ -123,6 +141,22 @@
         android:text="⏩ 2.0x"
         android:textColor="@color/accent_cyan"
         android:textSize="14sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+    <!-- Zoom Mode Status Pill (Top Center) -->
+    <TextView
+        android:id="@+id/tvZoomStatusBadge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="18dp"
+        android:background="@drawable/bg_osd_pill"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="6dp"
+        android:text="🔍 ЗУМ 1.0x • жесты отключены"
+        android:textColor="@color/accent_cyan"
+        android:textSize="12sp"
         android:textStyle="bold"
         android:visibility="gone" />
 
@@ -204,7 +238,7 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- HUD CONTROLS OVERLAY -->
+    <!-- NORMAL HUD CONTROLS OVERLAY -->
     <FrameLayout
         android:id="@+id/layoutControls"
         android:layout_width="match_parent"
@@ -366,7 +400,7 @@
             android:orientation="vertical"
             android:paddingHorizontal="14dp"
             android:paddingTop="18dp"
-            android:paddingBottom="14dp">
+            android:paddingBottom="12dp">
 
             <!-- Timeline Row -->
             <LinearLayout
@@ -404,65 +438,311 @@
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <!-- Action Controls Row -->
-            <LinearLayout
+            <!-- Action Controls Row (Horizontally scrollable on narrow screens) -->
+            <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="6dp"
+                android:fillViewport="true"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <ImageButton
+                        android:id="@+id/btnLock"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Lock"
+                        android:src="@drawable/ic_lock" />
+
+                    <ImageButton
+                        android:id="@+id/btnScreenshot"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="4dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Screenshot"
+                        android:src="@drawable/ic_screenshot" />
+
+                    <ImageButton
+                        android:id="@+id/btnZoomMode"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="4dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Zoom mode"
+                        android:src="@drawable/ic_zoom_in"
+                        app:tint="@color/accent_cyan" />
+
+                    <ImageButton
+                        android:id="@+id/btnFrameMode"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="4dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Frame by frame"
+                        android:src="@drawable/ic_frame_mode" />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <ImageButton
+                        android:id="@+id/btnSubtitles"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginHorizontal="2dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/subtitles_title"
+                        android:src="@drawable/ic_subtitles" />
+
+                    <ImageButton
+                        android:id="@+id/btnAudioTrack"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginHorizontal="2dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="@string/audio_tracks_title"
+                        android:src="@drawable/ic_audio_track" />
+
+                    <ImageButton
+                        android:id="@+id/btnRepeat"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginHorizontal="2dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Repeat"
+                        android:src="@drawable/ic_repeat" />
+
+                    <ImageButton
+                        android:id="@+id/btnAspectRatio"
+                        android:layout_width="42dp"
+                        android:layout_height="42dp"
+                        android:layout_marginStart="2dp"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:contentDescription="Aspect ratio"
+                        android:src="@drawable/ic_aspect_ratio" />
+                </LinearLayout>
+            </HorizontalScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- FILM REVIEW / ZOOM & FRAME-BY-FRAME BAR -->
+    <LinearLayout
+        android:id="@+id/layoutReviewBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_osd_pill"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp"
+        android:visibility="gone">
+
+        <!-- Row 1: Mode Title, Timecode (ms) + FPS, Zoom Controls, Screenshot, Close -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvReviewTimecode"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="00:00.000 • 24 fps"
+                android:textColor="@color/accent_cyan"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <!-- Zoom quick controls -->
+            <LinearLayout
+                android:id="@+id/layoutZoomButtons"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <ImageButton
-                    android:id="@+id/btnLock"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="Lock"
-                    android:src="@drawable/ic_lock" />
+                <TextView
+                    android:id="@+id/btnZoomOut"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_badge"
+                    android:gravity="center"
+                    android:text="−"
+                    android:textColor="@color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
 
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <ImageButton
-                    android:id="@+id/btnSubtitles"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
+                <TextView
+                    android:id="@+id/btnZoomReset"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
                     android:layout_marginHorizontal="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/subtitles_title"
-                    android:src="@drawable/ic_subtitles" />
+                    android:background="@drawable/bg_badge"
+                    android:gravity="center"
+                    android:paddingHorizontal="8dp"
+                    android:text="1.0x"
+                    android:textColor="@color/accent_cyan"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
 
-                <ImageButton
-                    android:id="@+id/btnAudioTrack"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginHorizontal="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="@string/audio_tracks_title"
-                    android:src="@drawable/ic_audio_track" />
-
-                <ImageButton
-                    android:id="@+id/btnRepeat"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginHorizontal="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="Repeat"
-                    android:src="@drawable/ic_repeat" />
-
-                <ImageButton
-                    android:id="@+id/btnAspectRatio"
-                    android:layout_width="42dp"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="Aspect ratio"
-                    android:src="@drawable/ic_aspect_ratio" />
+                <TextView
+                    android:id="@+id/btnZoomIn"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_badge"
+                    android:gravity="center"
+                    android:text="+"
+                    android:textColor="@color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
             </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnReviewToggleZoom"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="6dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Toggle Zoom Mode"
+                android:src="@drawable/ic_zoom_in" />
+
+            <ImageButton
+                android:id="@+id/btnReviewScreenshot"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Screenshot"
+                android:src="@drawable/ic_screenshot"
+                app:tint="@color/accent_cyan" />
+
+            <ImageButton
+                android:id="@+id/btnReviewClose"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Close"
+                android:src="@drawable/ic_close" />
         </LinearLayout>
-    </FrameLayout>
+
+        <!-- Row 2: Frame-by-Frame Stepping Controls -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btnStepMinus1s"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_badge"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="-1с"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/btnFramePrev"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginHorizontal="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_badge"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_frame_prev"
+                    app:tint="@color/white" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:text="−1 кадр"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnReviewPlayPause"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_badge"
+                android:contentDescription="Play/Pause"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_play"
+                app:tint="@color/accent_cyan" />
+
+            <LinearLayout
+                android:id="@+id/btnFrameNext"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginHorizontal="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_badge"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:text="+1 кадр"
+                    android:textColor="@color/white"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_frame_next"
+                    app:tint="@color/white" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/btnStepPlus1s"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/bg_badge"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="+1с"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
 
     <!-- UNLOCK FLOATING BUTTON (Visible only when locked) -->
     <ImageButton

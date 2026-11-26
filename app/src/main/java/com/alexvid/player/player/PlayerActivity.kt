@@ -1,9 +1,12 @@
 package com.alexvid.player.player
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.Uri
@@ -14,15 +17,18 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.util.Rational
+import android.view.MotionEvent
 import android.view.View
 import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
 import com.alexvid.player.R
 import com.alexvid.player.data.PlayerPreferences
 import com.alexvid.player.data.VideoScanner
@@ -31,6 +37,9 @@ import com.alexvid.player.databinding.DialogSubtitlesBinding
 import com.alexvid.player.model.FormatUtils
 import com.alexvid.player.model.HistoryItem
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -38,6 +47,7 @@ import org.videolan.libvlc.interfaces.IMedia
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 class PlayerActivity : AppCompatActivity() {
 
@@ -80,6 +90,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var binding: ActivityPlayerBinding
     private lateinit var prefs: PlayerPreferences
     private lateinit var audioManager: AudioManager
+    private lateinit var normalGestureHelper: PlayerGestureHelper
+    private lateinit var zoomPanHelper: ZoomPanGestureHelper
 
     private var libVLC: LibVLC? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -104,6 +116,14 @@ class PlayerActivity : AppCompatActivity() {
     private var hasAppliedResume = false
     private var normalPlaybackRate = 1.0f
     private var softwareVolumeBoost = 100 // 100..200
+
+    // Film Review: Zoom & Pan + Frame-by-Frame + Screenshot state
+    private var isZoomMode = false
+    private var isReviewModeActive = false
+    private var isReviewBarVisible = true
+    private var preciseFrameTimeMs: Long = -1L
+    private var pendingScreenshotCrop: Boolean = true
+    private var frameRepeatRunnable: Runnable? = null
 
     private val scaleModes = listOf(
         MediaPlayer.ScaleType.SURFACE_BEST_FIT to R.string.scale_best_fit,
@@ -135,6 +155,16 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    private val writePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            performScreenshot(pendingScreenshotCrop)
+        } else {
+            Toast.makeText(this, R.string.screenshot_permission_needed, Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityPlayerBinding.inflate(layoutInflater)
@@ -147,6 +177,7 @@ class PlayerActivity : AppCompatActivity() {
         initVlcEngine()
         setupControls()
         setupGestures()
+        setupReviewControls()
         handleIntent(intent)
     }
 
@@ -154,7 +185,17 @@ class PlayerActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         saveCurrentProgress()
+        exitReviewAndZoomMode(showNormalControls = false)
         handleIntent(intent)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::zoomPanHelper.isInitialized && isZoomMode) {
+            binding.vlcVideoLayout.post {
+                zoomPanHelper.reset()
+            }
+        }
     }
 
     private fun setupImmersiveSystemUi() {
@@ -179,7 +220,8 @@ class PlayerActivity : AppCompatActivity() {
         )
         libVLC = LibVLC(this, options)
         mediaPlayer = MediaPlayer(libVLC).apply {
-            attachViews(binding.vlcVideoLayout, null, true, false)
+            // useTextureView = true enables smooth 1x-8x zoom/pan & clean direct video screenshots
+            attachViews(binding.vlcVideoLayout, null, true, true)
             videoScale = scaleModes[currentScaleIndex].first
             setEventListener { event -> handleVlcEvent(event) }
         }
@@ -245,6 +287,7 @@ class PlayerActivity : AppCompatActivity() {
         pendingResumePosition = prefs.getPosition(uriString)
         normalPlaybackRate = 1.0f
         softwareVolumeBoost = 100
+        preciseFrameTimeMs = -1L
 
         binding.tvVideoTitle.text = title
         binding.tvStreamBadge.visibility = if (isOnlineStream) View.VISIBLE else View.GONE
@@ -274,14 +317,12 @@ class PlayerActivity : AppCompatActivity() {
             return
         }
 
-        // Configure hardware decoding mode
         when (prefs.hwDecodingMode) {
-            0 -> media.setHWDecoderEnabled(true, false) // Auto with SW fallback
-            1 -> media.setHWDecoderEnabled(true, true)  // Full HW
-            2 -> media.setHWDecoderEnabled(false, false) // Software (FFmpeg)
+            0 -> media.setHWDecoderEnabled(true, false)
+            1 -> media.setHWDecoderEnabled(true, true)
+            2 -> media.setHWDecoderEnabled(false, false)
         }
 
-        // Streaming & buffering options
         media.addOption(":network-caching=$currentCacheMs")
         media.addOption(":file-caching=500")
         media.addOption(":live-caching=$currentCacheMs")
@@ -298,7 +339,6 @@ class PlayerActivity : AppCompatActivity() {
         player.setVolume(softwareVolumeBoost)
         player.play()
 
-        // Auto-detect companion subtitle files for file:// videos
         if (!isOnlineStream) {
             val companionSubs = SubtitleHelper.findCompanionSubtitles(uri)
             companionSubs.firstOrNull()?.let { subUri ->
@@ -306,7 +346,6 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        // Record in history immediately
         prefs.addToHistory(
             HistoryItem(
                 uriString = uriString,
@@ -320,7 +359,9 @@ class PlayerActivity : AppCompatActivity() {
             )
         )
 
-        setControlsVisible(true)
+        if (!isReviewModeActive) {
+            setControlsVisible(true)
+        }
     }
 
     private fun handleVlcEvent(event: MediaPlayer.Event) {
@@ -347,7 +388,9 @@ class PlayerActivity : AppCompatActivity() {
                 MediaPlayer.Event.Playing -> {
                     binding.layoutBuffering.visibility = View.GONE
                     binding.layoutError.visibility = View.GONE
+                    preciseFrameTimeMs = -1L
                     binding.btnPlayPause.setImageResource(R.drawable.ic_pause)
+                    binding.btnReviewPlayPause.setImageResource(R.drawable.ic_pause)
                     if (!hasAppliedResume && pendingResumePosition > 3000L && player.length > pendingResumePosition + 5000L) {
                         hasAppliedResume = true
                         player.setTime(pendingResumePosition)
@@ -357,7 +400,9 @@ class PlayerActivity : AppCompatActivity() {
 
                 MediaPlayer.Event.Paused -> {
                     binding.btnPlayPause.setImageResource(R.drawable.ic_play)
+                    binding.btnReviewPlayPause.setImageResource(R.drawable.ic_play)
                     handler.removeCallbacks(hideControlsRunnable)
+                    updateReviewTimecode(if (preciseFrameTimeMs >= 0L) preciseFrameTimeMs else player.time)
                 }
 
                 MediaPlayer.Event.LengthChanged -> {
@@ -383,6 +428,9 @@ class PlayerActivity : AppCompatActivity() {
                             binding.seekBar.progress = progress
                         }
                     }
+                    if (isReviewModeActive && player.isPlaying) {
+                        updateReviewTimecode(time)
+                    }
                 }
 
                 MediaPlayer.Event.EndReached -> {
@@ -400,7 +448,8 @@ class PlayerActivity : AppCompatActivity() {
 
                         else -> {
                             binding.btnPlayPause.setImageResource(R.drawable.ic_play)
-                            setControlsVisible(true)
+                            binding.btnReviewPlayPause.setImageResource(R.drawable.ic_play)
+                            if (!isReviewModeActive) setControlsVisible(true)
                         }
                     }
                 }
@@ -463,6 +512,7 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnLock.setOnClickListener {
             isLocked = true
             setControlsVisible(false)
+            binding.layoutReviewBar.visibility = View.GONE
             binding.btnUnlock.visibility = View.VISIBLE
             scheduleHideUnlockButton()
             showOsd(R.drawable.ic_lock, getString(R.string.screen_locked))
@@ -471,8 +521,27 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnUnlock.setOnClickListener {
             isLocked = false
             binding.btnUnlock.visibility = View.GONE
-            setControlsVisible(true)
+            if (isReviewModeActive) {
+                binding.layoutReviewBar.visibility = View.VISIBLE
+            } else {
+                setControlsVisible(true)
+            }
             showOsd(R.drawable.ic_unlock, getString(R.string.screen_unlocked))
+        }
+
+        // Screenshot button on main HUD
+        binding.btnScreenshot.setOnClickListener {
+            requestScreenshot(cropToVisibleZoom = false)
+        }
+
+        // Enter Zoom & Pan Review Mode (disables normal swipe gestures!)
+        binding.btnZoomMode.setOnClickListener {
+            enterZoomMode()
+        }
+
+        // Enter Frame-by-Frame Review Mode
+        binding.btnFrameMode.setOnClickListener {
+            enterFrameMode()
         }
 
         binding.btnRotate.setOnClickListener {
@@ -532,14 +601,292 @@ class PlayerActivity : AppCompatActivity() {
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
                 isSeekingFromBar = false
+                preciseFrameTimeMs = -1L
                 val len = mediaPlayer?.length ?: 0L
                 if (len > 0L) {
                     val target = (len * (seekBar.progress / 1000.0)).toLong()
-                    mediaPlayer?.setTime(target)
+                    mediaPlayer?.setTime(target, false)
                 }
                 scheduleHideControls()
             }
         })
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupReviewControls() {
+        binding.btnZoomIn.setOnClickListener { zoomPanHelper.zoomBy(1.35f) }
+        binding.btnZoomOut.setOnClickListener { zoomPanHelper.zoomBy(1f / 1.35f) }
+        binding.btnZoomReset.setOnClickListener { zoomPanHelper.reset() }
+
+        binding.btnReviewToggleZoom.setOnClickListener {
+            if (isZoomMode) {
+                isZoomMode = false
+                zoomPanHelper.reset()
+                updateReviewUiState()
+                showOsd(R.drawable.ic_zoom_in, getString(R.string.zoom_mode_off))
+            } else {
+                isZoomMode = true
+                updateReviewUiState()
+                showOsd(R.drawable.ic_zoom_in, getString(R.string.zoom_mode_on))
+            }
+        }
+
+        // Short tap = screenshot visible zoomed area (or full frame at 1x)
+        binding.btnReviewScreenshot.setOnClickListener {
+            requestScreenshot(cropToVisibleZoom = true)
+        }
+        // Long press = always screenshot full uncropped frame
+        binding.btnReviewScreenshot.setOnLongClickListener {
+            requestScreenshot(cropToVisibleZoom = false)
+            true
+        }
+
+        binding.btnReviewClose.setOnClickListener {
+            exitReviewAndZoomMode(showNormalControls = true)
+        }
+
+        binding.btnReviewPlayPause.setOnClickListener {
+            togglePlayPause()
+        }
+
+        binding.btnStepMinus1s.setOnClickListener { stepByMillis(-1000L) }
+        binding.btnStepPlus1s.setOnClickListener { stepByMillis(1000L) }
+
+        // Frame-by-frame buttons support both single tap and hold-to-scrub!
+        attachFrameHoldListener(binding.btnFramePrev, deltaFrames = -1)
+        attachFrameHoldListener(binding.btnFrameNext, deltaFrames = 1)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun attachFrameHoldListener(view: View, deltaFrames: Int) {
+        view.setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.isPressed = true
+                    stopFrameAutoRepeat()
+                    stepByFrames(deltaFrames)
+                    val repeat = object : Runnable {
+                        override fun run() {
+                            stepByFrames(deltaFrames)
+                            handler.postDelayed(this, 150L)
+                        }
+                    }
+                    frameRepeatRunnable = repeat
+                    handler.postDelayed(repeat, 420L)
+                    true
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.isPressed = false
+                    stopFrameAutoRepeat()
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    private fun stopFrameAutoRepeat() {
+        frameRepeatRunnable?.let { handler.removeCallbacks(it) }
+        frameRepeatRunnable = null
+    }
+
+    private fun enterZoomMode() {
+        isReviewModeActive = true
+        isZoomMode = true
+        isReviewBarVisible = true
+        setControlsVisible(false)
+        updateReviewUiState()
+        updateReviewTimecode(mediaPlayer?.time ?: 0L)
+        showOsd(R.drawable.ic_zoom_in, getString(R.string.zoom_mode_on))
+    }
+
+    private fun enterFrameMode() {
+        val player = mediaPlayer
+        if (player?.isPlaying == true) {
+            player.pause()
+        }
+        isReviewModeActive = true
+        isReviewBarVisible = true
+        setControlsVisible(false)
+        updateReviewUiState()
+        updateReviewTimecode(player?.time ?: 0L)
+        showOsd(R.drawable.ic_frame_mode, getString(R.string.frame_mode_on))
+    }
+
+    private fun exitReviewAndZoomMode(showNormalControls: Boolean) {
+        stopFrameAutoRepeat()
+        isZoomMode = false
+        isReviewModeActive = false
+        isReviewBarVisible = false
+        preciseFrameTimeMs = -1L
+        if (::zoomPanHelper.isInitialized) {
+            zoomPanHelper.reset()
+        }
+        binding.layoutReviewBar.visibility = View.GONE
+        binding.tvZoomStatusBadge.visibility = View.GONE
+        if (showNormalControls) {
+            setControlsVisible(true)
+        }
+    }
+
+    private fun updateReviewUiState() {
+        binding.layoutReviewBar.visibility =
+            if (isReviewModeActive && isReviewBarVisible) View.VISIBLE else View.GONE
+        binding.layoutZoomButtons.visibility = if (isZoomMode) View.VISIBLE else View.GONE
+        binding.tvZoomStatusBadge.visibility =
+            if (isZoomMode && isReviewBarVisible) View.VISIBLE else View.GONE
+
+        val zoomTint = ContextCompat.getColor(
+            this,
+            if (isZoomMode) R.color.accent_cyan else R.color.text_secondary
+        )
+        binding.btnReviewToggleZoom.setColorFilter(zoomTint)
+
+        val scale = if (::zoomPanHelper.isInitialized) zoomPanHelper.scale else 1.0f
+        val scaleStr = String.format(Locale.US, "%.1fx", scale)
+        binding.btnZoomReset.text = scaleStr
+        binding.tvZoomStatusBadge.text = "🔍 ЗУМ $scaleStr • жесты плеера отключены"
+
+        binding.btnReviewPlayPause.setImageResource(
+            if (mediaPlayer?.isPlaying == true) R.drawable.ic_pause else R.drawable.ic_play
+        )
+    }
+
+    private fun getVideoFps(): Double {
+        val vt = mediaPlayer?.currentVideoTrack
+        if (vt != null && vt.frameRateNum > 0 && vt.frameRateDen > 0) {
+            val fps = vt.frameRateNum.toDouble() / vt.frameRateDen.toDouble()
+            if (fps in 5.0..240.0) return fps
+        }
+        return 25.0
+    }
+
+    private fun stepByFrames(deltaFrames: Int) {
+        val player = mediaPlayer ?: return
+        val len = player.length
+        if (len <= 0L) return
+
+        if (player.isPlaying) {
+            player.pause()
+            preciseFrameTimeMs = player.time
+        } else if (preciseFrameTimeMs < 0L) {
+            preciseFrameTimeMs = player.time
+        }
+
+        val fps = getVideoFps()
+        val frameMs = (1000.0 / fps).roundToLong().coerceIn(8L, 100L)
+        preciseFrameTimeMs = (preciseFrameTimeMs + deltaFrames * frameMs).coerceIn(0L, len)
+        player.setTime(preciseFrameTimeMs, false)
+
+        updateReviewTimecode(preciseFrameTimeMs)
+        binding.tvCurrentTime.text = FormatUtils.formatDuration(preciseFrameTimeMs)
+        val progress = ((preciseFrameTimeMs.toDouble() / len.toDouble()) * 1000.0)
+            .roundToInt()
+            .coerceIn(0, 1000)
+        binding.seekBar.progress = progress
+    }
+
+    private fun stepByMillis(deltaMs: Long) {
+        val player = mediaPlayer ?: return
+        val len = player.length
+        if (len <= 0L) return
+
+        val base = if (!player.isPlaying && preciseFrameTimeMs >= 0L) preciseFrameTimeMs else player.time
+        val target = (base + deltaMs).coerceIn(0L, len)
+        preciseFrameTimeMs = if (!player.isPlaying) target else -1L
+        player.setTime(target, false)
+
+        updateReviewTimecode(target)
+        binding.tvCurrentTime.text = FormatUtils.formatDuration(target)
+    }
+
+    private fun updateReviewTimecode(timeMs: Long) {
+        val safeMs = timeMs.coerceAtLeast(0L)
+        val msPart = safeMs % 1000L
+        val fps = getVideoFps()
+        val fpsLabel = if (abs(fps - fps.roundToInt()) < 0.05) {
+            "${fps.roundToInt()} fps"
+        } else {
+            String.format(Locale.US, "%.2f fps", fps)
+        }
+        binding.tvReviewTimecode.text = String.format(
+            Locale.US,
+            "%s.%03d • %s",
+            FormatUtils.formatDuration(safeMs),
+            msPart,
+            fpsLabel
+        )
+    }
+
+    // --- Screenshots ---
+
+    private fun requestScreenshot(cropToVisibleZoom: Boolean) {
+        pendingScreenshotCrop = cropToVisibleZoom
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                writePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                return
+            }
+        }
+        performScreenshot(cropToVisibleZoom)
+    }
+
+    private fun performScreenshot(cropToVisibleZoom: Boolean) {
+        val scale = if (::zoomPanHelper.isInitialized) zoomPanHelper.scale else 1.0f
+        val tx = if (::zoomPanHelper.isInitialized) zoomPanHelper.translationX else 0f
+        val ty = if (::zoomPanHelper.isInitialized) zoomPanHelper.translationY else 0f
+
+        val (bitmap, cropped) = ScreenshotHelper.captureVideoBitmap(
+            viewportView = binding.videoViewport,
+            vlcLayout = binding.vlcVideoLayout,
+            scale = scale,
+            translationX = tx,
+            translationY = ty,
+            cropToVisibleViewport = cropToVisibleZoom
+        )
+
+        if (bitmap == null) {
+            Toast.makeText(this, R.string.screenshot_error, Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        triggerShutterFlash()
+
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                ScreenshotHelper.saveBitmapToGallery(this@PlayerActivity, bitmap, cropped)
+            }
+            if (result.success) {
+                val msg = if (result.croppedRegion) {
+                    getString(R.string.screenshot_zoom_saved, String.format(Locale.US, "%.1fx", scale))
+                } else {
+                    getString(R.string.screenshot_saved)
+                }
+                showOsd(R.drawable.ic_screenshot, "Скриншот сохранён", secondary = msg)
+            } else {
+                Toast.makeText(
+                    this@PlayerActivity,
+                    "${getString(R.string.screenshot_error)}: ${result.error.orEmpty()}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    private fun triggerShutterFlash() {
+        binding.viewShutterFlash.visibility = View.VISIBLE
+        binding.viewShutterFlash.alpha = 0.72f
+        binding.viewShutterFlash.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction { binding.viewShutterFlash.visibility = View.GONE }
+            .start()
     }
 
     private fun updatePlaylistButtons() {
@@ -548,8 +895,9 @@ class PlayerActivity : AppCompatActivity() {
         binding.btnNextVideo.visibility = if (hasPlaylist && playlistIndex + 1 < playlistUris.size) View.VISIBLE else View.GONE
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun setupGestures() {
-        val gestureHelper = PlayerGestureHelper(
+        normalGestureHelper = PlayerGestureHelper(
             this,
             binding.gestureOverlay,
             object : PlayerGestureHelper.GestureListener {
@@ -559,6 +907,9 @@ class PlayerActivity : AppCompatActivity() {
                     if (isLocked) {
                         binding.btnUnlock.visibility = View.VISIBLE
                         scheduleHideUnlockButton()
+                    } else if (isReviewModeActive) {
+                        isReviewBarVisible = !isReviewBarVisible
+                        updateReviewUiState()
                     } else {
                         setControlsVisible(!isControlsVisible)
                     }
@@ -646,13 +997,14 @@ class PlayerActivity : AppCompatActivity() {
                 }
 
                 override fun onSeekCommit(targetMs: Long) {
-                    mediaPlayer?.setTime(targetMs)
+                    preciseFrameTimeMs = -1L
+                    mediaPlayer?.setTime(targetMs, false)
                 }
 
                 override fun getDurationMs(): Long = mediaPlayer?.length ?: 0L
 
                 override fun onPinchZoom(zoomIn: Boolean) {
-                    currentScaleIndex = if (zoomIn) 2 else 0 // FILL vs BEST_FIT
+                    currentScaleIndex = if (zoomIn) 2 else 0
                     applyCurrentScaleMode()
                 }
 
@@ -674,7 +1026,35 @@ class PlayerActivity : AppCompatActivity() {
                 }
             }
         )
-        binding.gestureOverlay.setOnTouchListener(gestureHelper)
+
+        zoomPanHelper = ZoomPanGestureHelper(
+            context = this,
+            containerView = binding.videoViewport,
+            videoView = binding.vlcVideoLayout,
+            callback = object : ZoomPanGestureHelper.Callback {
+                override fun onTransformChanged(scale: Float, translationX: Float, translationY: Float) {
+                    val scaleStr = String.format(Locale.US, "%.1fx", scale)
+                    binding.btnZoomReset.text = scaleStr
+                    binding.tvZoomStatusBadge.text = "🔍 ЗУМ $scaleStr • жесты плеера отключены"
+                }
+
+                override fun onSingleTap() {
+                    isReviewBarVisible = !isReviewBarVisible
+                    updateReviewUiState()
+                }
+            }
+        )
+
+        // Strict dispatcher: when Zoom Mode is active, normal gestures are 100% bypassed!
+        binding.gestureOverlay.setOnTouchListener { v, event ->
+            if (isLocked) {
+                normalGestureHelper.onTouch(v, event)
+            } else if (isZoomMode) {
+                zoomPanHelper.onTouch(v, event)
+            } else {
+                normalGestureHelper.onTouch(v, event)
+            }
+        }
     }
 
     private fun togglePlayPause() {
@@ -682,6 +1062,7 @@ class PlayerActivity : AppCompatActivity() {
         if (player.isPlaying) {
             player.pause()
         } else {
+            preciseFrameTimeMs = -1L
             player.play()
         }
     }
@@ -690,8 +1071,9 @@ class PlayerActivity : AppCompatActivity() {
         val player = mediaPlayer ?: return
         val len = player.length
         if (len <= 0L) return
+        preciseFrameTimeMs = -1L
         val target = (player.time + deltaMs).coerceIn(0L, len)
-        player.setTime(target)
+        player.setTime(target, false)
     }
 
     private fun applyCurrentScaleMode() {
@@ -731,7 +1113,7 @@ class PlayerActivity : AppCompatActivity() {
         }
         binding.layoutOsd.visibility = View.VISIBLE
         handler.removeCallbacks(hideOsdRunnable)
-        handler.postDelayed(hideOsdRunnable, 1100L)
+        handler.postDelayed(hideOsdRunnable, 1300L)
     }
 
     private fun setControlsVisible(visible: Boolean) {
@@ -745,7 +1127,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun scheduleHideControls() {
         handler.removeCallbacks(hideControlsRunnable)
-        if (mediaPlayer?.isPlaying == true) {
+        if (mediaPlayer?.isPlaying == true && !isReviewModeActive) {
             handler.postDelayed(hideControlsRunnable, 4000L)
         }
     }
@@ -766,7 +1148,6 @@ class PlayerActivity : AppCompatActivity() {
             .setPositiveButton(R.string.close, null)
             .create()
 
-        // Track radio list
         val currentSpu = player.spuTrack
         val tracks = player.spuTracks
 
@@ -791,13 +1172,11 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        // Load external subtitle file button
         dialogBinding.btnLoadExternalSub.setOnClickListener {
             dialog.dismiss()
             pickSubtitleLauncher.launch(arrayOf("*/*"))
         }
 
-        // Subtitle Delay Controls
         fun updateDelayLabel() {
             val sec = player.spuDelay / 1_000_000.0
             dialogBinding.tvSubDelayValue.text =
@@ -826,7 +1205,6 @@ class PlayerActivity : AppCompatActivity() {
             updateDelayLabel()
         }
 
-        // Font size selection
         when (prefs.subtitleRelFontSize) {
             20 -> dialogBinding.chipSizeSmall.isChecked = true
             13 -> dialogBinding.chipSizeLarge.isChecked = true
@@ -843,7 +1221,6 @@ class PlayerActivity : AppCompatActivity() {
             }
         }
 
-        // Color selection
         when (prefs.subtitleColor) {
             16776960 -> dialogBinding.chipColorYellow.isChecked = true
             65535 -> dialogBinding.chipColorCyan.isChecked = true
@@ -949,6 +1326,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            exitReviewAndZoomMode(showNormalControls = false)
             setControlsVisible(false)
             val params = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
@@ -964,6 +1342,8 @@ class PlayerActivity : AppCompatActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) {
             setControlsVisible(false)
+            binding.layoutReviewBar.visibility = View.GONE
+            binding.tvZoomStatusBadge.visibility = View.GONE
             binding.btnUnlock.visibility = View.GONE
         } else {
             setupImmersiveSystemUi()
@@ -992,6 +1372,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        stopFrameAutoRepeat()
         saveCurrentProgress()
         val inPip = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode
         if (!inPip) {
@@ -1009,6 +1390,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopFrameAutoRepeat()
         handler.removeCallbacksAndMessages(null)
         saveCurrentProgress()
         mediaPlayer?.apply {
