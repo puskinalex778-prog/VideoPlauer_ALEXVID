@@ -1,0 +1,77 @@
+name: Build ALEXVID Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Compile Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build Release APKs
+        run: gradle assembleRelease --stacktrace
+
+      - name: Prepare renamed APKs
+        run: |
+          mkdir -p dist
+          for apk in app/build/outputs/apk/release/*.apk; do
+            base=$(basename "$apk")
+            if [[ "$base" == *"universal"* ]]; then
+              cp "$apk" "dist/ALEXVID-universal.apk"
+            elif [[ "$base" == *"arm64-v8a"* ]]; then
+              cp "$apk" "dist/ALEXVID-arm64-v8a.apk"
+            elif [[ "$base" == *"armeabi-v7a"* ]]; then
+              cp "$apk" "dist/ALEXVID-armeabi-v7a.apk"
+            elif [[ "$base" == *"x86_64"* ]]; then
+              cp "$apk" "dist/ALEXVID-x86_64.apk"
+            fi
+          done
+          ls -lh dist/
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALEXVID-APKs
+          path: dist/*.apk
+          retention-days: 30
+
+      - name: Publish GitHub Release with APKs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0-latest
+          name: "ALEXVID v1.0.0 — Android APK"
+          body: |
+            ### ALEXVID — Универсальный видеоплеер для Android
+
+            **Какой APK скачать:**
+            - `ALEXVID-arm64-v8a.apk` — для большинства современных смартфонов Android (меньше размер).
+            - `ALEXVID-universal.apk` — универсальный APK для любых устройств Android (смартфоны, планшеты, Android TV).
+
+            **Основные возможности:**
+            - Поддержка всех форматов видео и аудио (MKV, MP4, AVI, MOV, FLV, WMV, WebM, TS, VOB, HEVC, AV1, AC3, DTS и др.) на движке LibVLC.
+            - Полная поддержка субтитров (встроенные дорожки + внешние `.srt`, `.ass`, `.ssa`, `.vtt`, `.sub`, задержка, размер и цвет).
+            - Управление жестами (яркость, громкость до 200%, перемотка, двойной тап ±10с, удержание 2.0x, щипок для масштаба, блокировка экрана).
+            - Воспроизведение онлайн-потоков (HLS `.m3u8`, MPEG-DASH `.mpd`, RTSP, RTMP, HTTP/HTTPS, User-Agent, Referer) + открытие видео из браузера и других приложений через «Открыть с помощью» и «Поделиться → ALEXVID».
+          files: dist/*.apk
+          make_latest: true
+          overwrite_files: true

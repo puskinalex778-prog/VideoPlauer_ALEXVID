@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.AlexVid" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/accent_cyan</item>
+        <item name="colorOnPrimary">@color/bg_primary</item>
+        <item name="colorSecondary">@color/accent_violet</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="android:colorBackground">@color/bg_primary</item>
+        <item name="colorSurface">@color/bg_surface</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorSurfaceVariant">@color/bg_card</item>
+        <item name="colorOnSurfaceVariant">@color/text_secondary</item>
+        <item name="android:statusBarColor">@color/bg_primary</item>
+        <item name="android:navigationBarColor">@color/bg_surface</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.AlexVid.AlertDialog</item>
+    </style>
+
+    <style name="ThemeOverlay.AlexVid.AlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="colorSurface">@color/bg_surface</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorPrimary">@color/accent_cyan</item>
+    </style>
+
+    <style name="Theme.AlexVid.Player" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/accent_cyan</item>
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode" tools:targetApi="p">shortEdges</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.AlexVid.AlertDialog</item>
+    </style>
+</resources>

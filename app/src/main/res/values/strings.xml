@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ALEXVID</string>
+    <string name="app_subtitle">Универсальный видеоплеер</string>
+
+    <!-- Tabs -->
+    <string name="tab_videos">Видео</string>
+    <string name="tab_online">Онлайн</string>
+    <string name="tab_history">История</string>
+
+    <!-- Library -->
+    <string name="search_hint">Поиск видео...</string>
+    <string name="all_folders">Все папки</string>
+    <string name="open_any_file">Открыть файл</string>
+    <string name="no_videos_found">Видео не найдены.\nНажмите «Открыть файл», чтобы выбрать любой формат (MKV, AVI, MP4, FLV, WMV, TS…)</string>
+    <string name="permission_needed">Нужен доступ к видеофайлам, чтобы показать библиотеку устройства.</string>
+    <string name="grant_permission">Разрешить доступ</string>
+    <string name="sort_title">Сортировка</string>
+    <string name="sort_date_desc">Сначала новые</string>
+    <string name="sort_name_asc">По названию (А–Я)</string>
+    <string name="sort_size_desc">По размеру</string>
+    <string name="sort_duration_desc">По длительности</string>
+
+    <!-- Online Stream -->
+    <string name="online_title">Воспроизведение онлайн-потока</string>
+    <string name="online_desc">Вставьте прямую ссылку на видео или поток: HLS (.m3u8), MPEG-DASH (.mpd), MP4/MKV, RTSP, RTMP или откройте ссылку из браузера / Telegram через «Поделиться → ALEXVID».</string>
+    <string name="stream_url_hint">https://example.com/stream.m3u8</string>
+    <string name="stream_name_hint">Название (необязательно)</string>
+    <string name="btn_paste">Вставить</string>
+    <string name="btn_play_stream">Воспроизвести</string>
+    <string name="btn_save_stream">В избранное</string>
+    <string name="advanced_options">Расширенные настройки потока (User-Agent, Referer, буфер)</string>
+    <string name="user_agent_hint">User-Agent (необязательно)</string>
+    <string name="referer_hint">Referer (необязательно)</string>
+    <string name="network_cache_label">Буферизация сети (мс)</string>
+    <string name="saved_streams_title">Избранные и тестовые потоки</string>
+    <string name="invalid_url">Введите корректную ссылку (http://, https://, rtsp://, rtmp://, udp://)</string>
+    <string name="stream_saved">Поток добавлен в избранное</string>
+    <string name="clipboard_empty">Буфер обмена пуст</string>
+
+    <!-- History -->
+    <string name="history_empty">История просмотров пока пуста.\nЗдесь появятся недавно открытые локальные и онлайн-видео.</string>
+    <string name="clear_history">Очистить</string>
+    <string name="clear_history_confirm">Очистить всю историю просмотров?</string>
+
+    <!-- Player -->
+    <string name="buffering">Буферизация…</string>
+    <string name="loading_video">Загрузка видео…</string>
+    <string name="error_playback">Не удалось воспроизвести видео.\nПроверьте ссылку или интернет-соединение.</string>
+    <string name="retry">Повторить</string>
+    <string name="close">Закрыть</string>
+    <string name="cancel">Отмена</string>
+    <string name="apply">Применить</string>
+    <string name="screen_locked">Экран заблокирован</string>
+    <string name="screen_unlocked">Экран разблокирован</string>
+    <string name="speed_2x_active">2.0x ускорение</string>
+    <string name="repeat_on">Повтор включён</string>
+    <string name="repeat_off">Повтор выключен</string>
+
+    <!-- Subtitles Dialog -->
+    <string name="subtitles_title">Субтитры</string>
+    <string name="subtitles_off">Выключить субтитры</string>
+    <string name="load_external_subtitles">Загрузить файл субтитров (.srt, .ass, .vtt, .sub)</string>
+    <string name="subtitle_delay">Задержка субтитров</string>
+    <string name="subtitle_size">Размер шрифта</string>
+    <string name="subtitle_color">Цвет текста</string>
+    <string name="subtitle_loaded">Субтитры загружены</string>
+    <string name="subtitle_load_error">Не удалось загрузить файл субтитров</string>
+    <string name="no_embedded_subtitles">Встроенных субтитров нет</string>
+    <string name="subtitle_style_hint">Изменение размера или цвета применится при следующем перезапуске видео</string>
+
+    <!-- Audio & Speed & Sleep -->
+    <string name="audio_tracks_title">Аудиодорожка</string>
+    <string name="audio_off">Без звука</string>
+    <string name="audio_delay">Задержка звука</string>
+    <string name="no_audio_tracks">Нет доступных аудиодорожек</string>
+    <string name="playback_speed_title">Скорость воспроизведения</string>
+    <string name="sleep_timer_title">Таймер сна</string>
+    <string name="sleep_timer_off">Выключен</string>
+    <string name="sleep_timer_set">Таймер сна: %1$d мин</string>
+
+    <!-- Aspect Ratio -->
+    <string name="scale_best_fit">Вписать</string>
+    <string name="scale_fit_screen">По экрану</string>
+    <string name="scale_fill">Заполнить (Обрезка)</string>
+    <string name="scale_16_9">16:9</string>
+    <string name="scale_4_3">4:3</string>
+    <string name="scale_original">Оригинал</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Настройки ALEXVID</string>
+    <string name="hw_decoding_title">Аппаратное декодирование</string>
+    <string name="hw_auto">Авто (рекомендуется)</string>
+    <string name="hw_full">Полное аппаратное</string>
+    <string name="hw_disabled">Программное (FFmpeg)</string>
+    <string name="gestures_guide_title">Управление жестами в плеере</string>
+    <string name="gestures_guide_text">• Свайп слева вверх/вниз — яркость\n• Свайп справа вверх/вниз — громкость (до 200%)\n• Свайп влево/вправо — перемотка\n• Двойной тап слева/справа — −10с / +10с\n• Двойной тап по центру — пауза/пуск\n• Удержание на экране — 2.0x скорость\n• Щипок двумя пальцами — масштаб (Вписать/Заполнить)</string>
+</resources>

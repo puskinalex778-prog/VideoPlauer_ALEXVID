@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_primary">#0B0E14</color>
+    <color name="bg_surface">#141A24</color>
+    <color name="bg_card">#1B2332</color>
+    <color name="bg_card_stroke">#2A3548</color>
+    <color name="bg_input">#101620</color>
+
+    <color name="accent_cyan">#00D4FF</color>
+    <color name="accent_cyan_dark">#0099CC</color>
+    <color name="accent_violet">#7C4DFF</color>
+    <color name="accent_orange">#FF9100</color>
+    <color name="accent_green">#00E676</color>
+    <color name="accent_red">#FF5252</color>
+
+    <color name="text_primary">#F4F7FC</color>
+    <color name="text_secondary">#9AA6BC</color>
+    <color name="text_hint">#68758C</color>
+
+    <color name="player_scrim">#99000000</color>
+    <color name="player_osd_bg">#CC10151E</color>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+</resources>
